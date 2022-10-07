@@ -12,7 +12,7 @@ spring <- read.csv("1214.csv", header = T)
 courses <- rbind(fall, spring) 
 
 #filtering the courses by unique course ID, takes the first subject and department and tosses the second
-uw_courses <- courses[unique(courses[, c("Course.Id")]), ]
+uw_courses <- courses[!duplicated(courses[, c("Course.Id")]), ]
 
 uw_courses["year"] <- "AY2020"
 uw_courses <- uw_courses %>% 
@@ -206,6 +206,7 @@ for (i in 1:nrow(uw_courses)){
 #write new cleaned table as csv
 write.csv(uw_courses, "uw_courses_cleaned.csv", row.names = F)
 
+##RUN FUNCTION IN tabulate_sdg_keywords.R FIRST 
 ##mapping courses to SDG
 classes <- read.csv("uw_courses_cleaned.csv")
 cmu_usc_keywords <- read.csv("cmu_usc_pwg_mapped.csv")
@@ -221,3 +222,94 @@ for (goal_num in 1:17) {
   all_sdg_keywords <- rbind(all_sdg_keywords, cur_sdg_keywords) 
 }
 
+all_sdg_keywords_copy = all_sdg_keywords
+
+all_sdg_keywords_copy <- all_sdg_keywords_copy %>%
+  left_join(cmu_usc_keywords, by = c("goal", "keyword")) %>%
+  select(Course.Id, course_title, Subject, Catalog.Number, Department, School.College, Sustainability, year, course_desc,keyword, goal, weight, color) %>%
+  arrange(Course.Id)
+
+write.csv(all_sdg_keywords_copy, "master_course_sdg_data.csv", row.names = F)
+save(all_sdg_keywords_copy, file="all_sdg_keywords.Rda")
+
+
+# function to filter data to data only with weight above certain threshold
+filter = function(data, threshold){
+  mini_df = data[data$weight > threshold, ]
+  return(mini_df)
+}
+
+master_data = read.csv("master_course_sdg_data.csv")
+filtered_data = filter(master_data, 0.2)
+write.csv(filtered_data, "master_course_sdg_data_filtered.csv", row.names=F)
+
+##Classifying which classes are sustainability related
+
+# grab the unique class titles
+classes = unique(uw_courses$course_title)
+sustainability = data.frame(classes)
+# create column to store goals that class maps to 
+sustainability = sustainability %>% add_column(goals = NA)
+# create column to store sustainability-relatedness
+sustainability = sustainability %>% add_column(related = NA)
+# criteria lists
+social_economic_goals = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17)
+environment_goals = c(13, 14, 15)
+
+
+index = 1
+for (class in sustainability$classes){
+  # subset master data to just the rows for that class and grab the unique goals
+  mini_df = unique(master_data[master_data$course_title == class, "goal"])
+  # combine all the goals into a string to be added to the goals column in df
+  goals = paste(mini_df, collapse=",")
+  #update the goals column of df to be this string "goals"
+  sustainability$goals[index] = goals
+  index = index + 1
+}
+
+
+# now need to go through and check criteria and update the related column accordingly
+for (i in 1:nrow(sustainability)){
+  # first check if it is null
+  if (sustainability$goals[i] == ""){
+    sustainability$related[i] = "Not Related"
+    next
+  }
+  # grab the goals in each row
+  goals = as.list(strsplit(sustainability$goals[i], ",")[[1]])
+  # set these booleans to false for each row to start
+  is_social_economic = FALSE
+  is_environment = FALSE
+  for (j in 1:length(goals)){
+    if (goals[j] %in% social_economic_goals){
+      is_social_economic = TRUE
+    }
+    if (goals[j] %in% environment_goals){
+      is_environment = TRUE
+    }
+  }
+  # now we should know if there was at least one of the criteria present
+  if (is_social_economic & is_environment){
+    sustainability$related[i] = "Focused"
+  }
+  if (is_social_economic & !is_environment){
+    sustainability$related[i] = "Inclusive"
+  }
+  if (!is_social_economic & is_environment){
+    sustainability$related[i] = "Inclusive"
+  }
+}
+
+# need to rename the columns
+names(sustainability)[names(sustainability) == 'classes'] <- "course_title"
+names(sustainability)[names(sustainability) == 'related'] <- "sustainability_classification"
+names(sustainability)[names(sustainability) == 'goals'] <- "all_goals"
+
+sum(sustainability$sustainability_classification == "Focused")
+sum(sustainability$sustainability_classification == "Inclusive")
+sum(sustainability$sustainability_classification == "Not Related")
+
+write.csv(sustainability, "sustainability_related_courses_filtered.csv", row.names = F)
+
+sum(uw_courses$Sustainability == "SUST")
